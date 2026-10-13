@@ -1,0 +1,15 @@
+{
+  "model": "haiku",
+  "effort": "medium",
+  "method": "依課本方法",
+  "mode": "lesson",
+  "voice": {
+    "enabled": true,
+    "chinese": "",
+    "english": "",
+    "englishLang": "en-US",
+    "rate": 1,
+    "pitch": 1,
+    "volume": 1
+  }
+}
