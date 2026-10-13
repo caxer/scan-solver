@@ -5,7 +5,7 @@ import { INSTRUCTIONS, LIST_INSTRUCTIONS, LIST_TURN, FOLLOW_INSTRUCTIONS, userTu
 import { scanPartial } from './lesson.js';
 import { normalizeListing } from './learning.js';
 import { unlock } from './config.js';
-import { hasPasskey, enrollPasskey, unlockPasskey, forgetPasskey } from './passkey.js';
+import { hasPasskey, hasPending, completeRegistration, enrollPasskey, unlockPasskey, forgetPasskey } from './passkey.js';
 import { profileText, parseStudy, STUDY_INSTRUCTIONS } from './study.js';
 import { MODELS, currentSettings } from './settings.js';
 export { MODELS } from './settings.js';
@@ -77,9 +77,9 @@ export async function login(password) {
 export async function enableFaceID() {
   if (localMode || !loggedIn()) throw new Error('請先用密碼登入，再啟用 Face ID。');
   if (enrollmentPassword === null) return false;
-  await enrollPasskey(enrollmentPassword);
-  enrollmentPassword = null;
-  return true;
+  const result = await (hasPending() ? completeRegistration(enrollmentPassword) : enrollPasskey(enrollmentPassword));
+  if (result.ready) enrollmentPassword = null;
+  return result;
 }
 
 export async function loginWithFaceID() {
