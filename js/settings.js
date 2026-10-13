@@ -1,5 +1,6 @@
 import { normalizeProfile } from './study.js';
 import { normalizeVoice } from './voice-settings.js';
+import { dataRepoPath } from './data-repo.js';
 
 export const MODELS = [
   { id: 'haiku', model: 'claude-haiku-5-5', label: 'Haiku 5.5', hint: '快速', fallback: false },
@@ -19,7 +20,7 @@ export function applySettings(value) {
   return currentSettings();
 }
 
-const cloudURL = account => `https://api.github.com/repos/${account.repo}/contents/settings.json`;
+const cloudURL = account => `https://api.github.com/repos/${dataRepoPath(account.repo)}/contents/settings.json`;
 const cloudHeaders = account => ({ authorization: `Bearer ${account.token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28' });
 export async function readCloudSettings(account) {
   const res = await fetch(cloudURL(account), { headers: { ...cloudHeaders(account), accept: 'application/vnd.github.raw+json' }, cache: 'no-store', signal: AbortSignal.timeout(5000) });

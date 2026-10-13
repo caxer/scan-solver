@@ -5,6 +5,7 @@ import { INSTRUCTIONS, LIST_INSTRUCTIONS, LIST_TURN, FOLLOW_INSTRUCTIONS, userTu
 import { scanPartial } from './lesson.js';
 import { normalizeListing } from './learning.js';
 import { unlock } from './config.js';
+import { normalizeDataCredentials } from './data-repo.js';
 import { hasPasskey, hasPending, completeRegistration, enrollPasskey, unlockPasskey, forgetPasskey } from './passkey.js';
 import { profileText, parseStudy, STUDY_INSTRUCTIONS } from './study.js';
 import { MODELS, currentSettings } from './settings.js';
@@ -27,7 +28,7 @@ export function modelName(id) {
 /* ---------- 密碼解鎖 ---------- */
 
 // secrets：{ apiKey, github: { token, repo }, adminPublicKey }，解開後記在這支手機
-let secrets = (() => { try { return hasPasskey() ? null : JSON.parse(localStorage.getItem(STORE) || 'null'); } catch { return null; } })();
+let secrets = (() => { try { return hasPasskey() ? null : normalizeDataCredentials(JSON.parse(localStorage.getItem(STORE) || 'null')); } catch { return null; } })();
 let enrollmentPassword = null;
 let localMode = false;
 export const isLocalSession = () => localMode;
@@ -45,7 +46,7 @@ export async function initializeLocalSession() {
   if (result.local !== true) return false;
   localMode = true;
   if (result.secrets?.apiKey) {
-    secrets = result.secrets;
+    secrets = normalizeDataCredentials(result.secrets);
     try { localStorage.removeItem(STORE); } catch { /* 無法寫入儲存空間 */ }
   }
   else if (secrets?.apiKey) {
@@ -61,7 +62,7 @@ export async function saveLocalKey(apiKey) {
   const res = await fetch('api/local-session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...secrets, apiKey }) });
   const result = await res.json();
   if (!res.ok || !result.secrets?.apiKey) throw new Error(result.error || '本機設定儲存失敗。');
-  secrets = result.secrets;
+  secrets = normalizeDataCredentials(result.secrets);
   try { localStorage.removeItem(STORE); } catch { /* 無法寫入儲存空間 */ }
 }
 

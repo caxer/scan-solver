@@ -3,6 +3,7 @@
 //   admin：管理員密碼鎖住的 { privateJwk, github: { token, repo } }
 //   adminPublicKey：手機用來加密使用紀錄的管理員公鑰
 import { unlockText } from './keybox.js';
+import { normalizeDataCredentials } from './data-repo.js';
 
 let cached = null;
 export async function loadKeyFile({ refresh = false } = {}) {
@@ -20,5 +21,5 @@ export async function loadKeyFile({ refresh = false } = {}) {
 // 用密碼打開 key.json 的其中一格（'user' 或 'admin'）
 export async function unlock(which, password) {
   const file = await loadKeyFile({ refresh: true });
-  return { ...JSON.parse(await unlockText(file[which], password)), adminPublicKey: file.adminPublicKey };
+  return normalizeDataCredentials({ ...JSON.parse(await unlockText(file[which], password)), adminPublicKey: file.adminPublicKey });
 }

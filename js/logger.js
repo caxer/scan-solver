@@ -3,6 +3,7 @@
 import { sealForAdmin } from './logbox.js';
 import { blobToBase64, isLocalSession, currentSecrets } from './ai.js';
 import { logOutbox } from './log-outbox.js';
+import { dataRepoPath } from './data-repo.js';
 
 const DEVICE_KEY = 'scan-solver.device';
 const ZONE = 'Asia/Taipei';
@@ -83,7 +84,7 @@ async function saveLocal(item) {
 }
 async function saveRemote(item, secrets) {
   if (!item.remote) return true;
-  if (!secrets?.github?.token || secrets.github.repo !== item.repo) return false;
+  if (!secrets?.github?.token || dataRepoPath(secrets.github.repo) !== dataRepoPath(item.repo)) return false;
   const key = `remote:${item.id}`;
   if (sending.has(key)) return sending.get(key);
   const send = async () => {
@@ -94,7 +95,7 @@ async function saveRemote(item, secrets) {
       Object.assign(item, current);
       const sealed = item.sealed || await sealForAdmin(item.publicKey, await materialize(item));
       if (!item.sealed) { await logOutbox.patch(item.id, { sealed }); item.sealed = sealed; }
-      const url = `https://api.github.com/repos/${item.repo}/contents/${item.path}`;
+      const url = `https://api.github.com/repos/${dataRepoPath(item.repo)}/contents/${item.path}`;
       const headers = { authorization: `Bearer ${secrets.github.token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'content-type': 'application/json' };
       const body = JSON.stringify({ message: `log ${item.record.kind} ${deviceId}`, content: utf8b64(JSON.stringify(sealed)) });
       for (let attempt = 1; attempt <= 3; attempt++) {
@@ -142,7 +143,7 @@ export function logEvent(secrets, entry) {
   if (!local && !remote) return Promise.resolve(false);
   const now = new Date(), id = entry.eventId || crypto.randomUUID(), t = parts(now);
   const { photo, location, ...rest } = entry;
-  const item = { id, local, remote, repo: secrets?.github?.repo, publicKey: secrets?.adminPublicKey, photo,
+  const item = { id, local, remote, repo: dataRepoPath(secrets?.github?.repo), publicKey: secrets?.adminPublicKey, photo,
     path: `logs/${t.year}-${t.month}-${t.day}/${t.hour}${t.minute}${t.second}-${entry.kind}-${id.replaceAll('-', '').slice(0, 8)}.json`,
     record: { time: now.toISOString(), ...rest, eventId: id, device: device || basicDevice(), location: null } };
   const ready = logOutbox.put(item);
