@@ -1,25 +1,31 @@
-// key.json（npm run setup 產生，跟網頁一起公開）：
-//   user：使用者密碼鎖住的 { apiKey, github: { token, repo } }
-//   admin：管理員密碼鎖住的 { privateJwk, github: { token, repo } }
+// key.json（npm run setup / npm run link 產生，跟網頁一起公開）：
+//   user.slots：每條專屬連結一格，各用自己的網址金鑰鎖住 { apiKey, github: { token, repo } }
+//   admin：舊版留下的管理員密碼盒，網頁不使用
 //   adminPublicKey：手機用來加密使用紀錄的管理員公鑰
-import { unlockText } from './keybox.js';
+import './link-key.js';
 import { normalizeDataCredentials } from './data-repo.js';
 
-let cached = null;
-export async function loadKeyFile({ refresh = false } = {}) {
-  if (cached && !refresh) return cached;
+export const USER_CONTEXT = 'teacher/user/v3';
+
+export function validKeyFile(file) {
+  return file?.v === 3 && Array.isArray(file.user?.slots) && file.user.slots.every(slot => typeof slot?.id === 'string' && typeof slot.iv === 'string' && typeof slot.ct === 'string') &&
+    file.adminPublicKey?.kty === 'RSA';
+}
+
+export async function loadKeyFile() {
   let file;
   try {
     const res = await fetch('key.json', { cache: 'no-store' });
     if (!res.ok) throw new Error(String(res.status));
     file = await res.json();
   } catch { throw new Error('找不到 key.json。請管理員先在電腦上執行 npm run setup，再發布。'); }
-  if (file?.v !== 2 || !file.user || !file.admin || !file.adminPublicKey) throw new Error('key.json 是舊格式，請管理員重新執行 npm run setup。');
-  return (cached = file);
+  if (!validKeyFile(file)) throw new Error('key.json 是舊格式，請管理員在電腦上執行 npm run link -- add 後重新發布。');
+  return file;
 }
 
-// 用密碼打開 key.json 的其中一格（'user' 或 'admin'）
-export async function unlock(which, password) {
-  const file = await loadKeyFile({ refresh: true });
-  return normalizeDataCredentials({ ...JSON.parse(await unlockText(file[which], password)), adminPublicKey: file.adminPublicKey });
+// 用網址金鑰（CryptoKey）打開 key.json 裡屬於這條連結的那一格；連結被移除時丟出 code: 'revoked'
+export async function unlock(key) {
+  const file = await loadKeyFile();
+  const secrets = JSON.parse(await LinkKey.openAny(key, file.user.slots, USER_CONTEXT));
+  return normalizeDataCredentials({ ...secrets, adminPublicKey: file.adminPublicKey });
 }

@@ -1,12 +1,11 @@
-// 呼叫 Claude：網頁放在 GitHub Pages，沒有伺服器。API key 用使用者密碼加密在 key.json，
-// 輸入密碼解開以後記在這支手機的瀏覽器，直接用官方 SDK 從瀏覽器呼叫 Claude API。
+// 呼叫 Claude：網頁放在 GitHub Pages，沒有伺服器。API key 用專屬連結的金鑰加密在 key.json，
+// 每次開啟用這台裝置記住的金鑰解開、只放在記憶體，直接用官方 SDK 從瀏覽器呼叫 Claude API。
 import Anthropic from './vendor/anthropic-sdk.js';
 import { INSTRUCTIONS, LIST_INSTRUCTIONS, LIST_TURN, FOLLOW_INSTRUCTIONS, userTurn, textTurn, followUpContext } from './prompt.js';
 import { scanPartial } from './lesson.js';
 import { normalizeListing } from './learning.js';
 import { unlock } from './config.js';
 import { normalizeDataCredentials } from './data-repo.js';
-import { hasPasskey, hasPending, completeRegistration, enrollPasskey, unlockPasskey, forgetPasskey } from './passkey.js';
 import { profileText, parseStudy, STUDY_INSTRUCTIONS } from './study.js';
 import { MODELS, currentSettings } from './settings.js';
 export { MODELS } from './settings.js';
@@ -16,7 +15,6 @@ export const DEFAULT_MODEL = 'haiku';
 export let EFFORT = currentSettings().effort;
 addEventListener('scan-solver-settings', () => { EFFORT = currentSettings().effort; });
 const FALLBACK = { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' };
-const STORE = 'scan-solver.secrets';
 const modelInfo = id => MODELS.find(m => m.id === id) || MODELS.find(m => m.id === DEFAULT_MODEL);
 
 // claude-haiku-5-5 → Haiku 5.5
@@ -25,15 +23,18 @@ export function modelName(id) {
   return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}${m[3] ? '.' + m[3] : ''}` : id || '';
 }
 
-/* ---------- 密碼解鎖 ---------- */
+/* ---------- 專屬連結解鎖 ---------- */
 
-// secrets：{ apiKey, github: { token, repo }, adminPublicKey }，解開後記在這支手機
-let secrets = (() => { try { return hasPasskey() ? null : normalizeDataCredentials(JSON.parse(localStorage.getItem(STORE) || 'null')); } catch { return null; } })();
-let enrollmentPassword = null;
+// secrets：{ apiKey, github: { token, repo }, adminPublicKey }，只放記憶體，不寫進瀏覽器儲存
+let secrets = null;
 let localMode = false;
 export const isLocalSession = () => localMode;
 export const loggedIn = () => Boolean(secrets?.apiKey);
 export const currentSecrets = () => secrets;
+
+// 舊版的明文登入、Face ID 密文與自動驗證旗標一律清掉。
+for (const name of ['scan-solver.secrets', 'scan-solver.passkey']) { try { localStorage.removeItem(name); } catch { /* 沒有儲存空間 */ } }
+try { sessionStorage.removeItem('scan-solver.skip-auto-face'); } catch { /* 沒有儲存空間 */ }
 
 export async function initializeLocalSession() {
   if (!['127.0.0.1', 'localhost'].includes(location.hostname) || document.querySelector('meta[name="scan-solver-local"]')?.content !== 'true') return false;
@@ -45,61 +46,31 @@ export async function initializeLocalSession() {
   } catch { return false; }
   if (result.local !== true) return false;
   localMode = true;
-  if (result.secrets?.apiKey) {
-    secrets = normalizeDataCredentials(result.secrets);
-    try { localStorage.removeItem(STORE); } catch { /* 無法寫入儲存空間 */ }
-  }
-  else if (secrets?.apiKey) {
-    // 沿用這個瀏覽器已解鎖的金鑰，讓清除瀏覽器資料後也能免密碼啟動。
-    try { await saveLocalKey(secrets.apiKey); }
-    catch { /* 仍可使用目前已解鎖的金鑰 */ }
-  } else secrets = null;
+  secrets = result.secrets?.apiKey ? normalizeDataCredentials(result.secrets) : null;
   return true;
 }
 
-export async function saveLocalKey(apiKey) {
-  if (!localMode) throw new Error('這個功能只適用於本機啟動。');
-  const res = await fetch('api/local-session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...secrets, apiKey }) });
-  const result = await res.json();
-  if (!res.ok || !result.secrets?.apiKey) throw new Error(result.error || '本機設定儲存失敗。');
-  secrets = normalizeDataCredentials(result.secrets);
-  try { localStorage.removeItem(STORE); } catch { /* 無法寫入儲存空間 */ }
+// 用金鑰解開 key.json。網址帶來的新金鑰解得開才記住；save 失敗時這次仍可使用。
+// 回傳 { saved }；連結被撤銷時清掉這台裝置的金鑰並丟出 code: 'revoked'。
+export async function unlockWithKey(key, { fresh = false } = {}) {
+  try { secrets = await unlock(key); }
+  catch (error) {
+    secrets = null;
+    if (error.code === 'revoked' && !fresh) await LinkKey.forget();
+    throw error;
+  }
+  return { saved: fresh ? await LinkKey.save(key) : true };
 }
 
-export async function login(password) {
-  secrets = await unlock('user', password);
-  enrollmentPassword = password;
-  try {
-    if (hasPasskey()) localStorage.removeItem(STORE);
-    else localStorage.setItem(STORE, JSON.stringify(secrets));
-  } catch { /* 無痕視窗：這次開著時有效 */ }
-}
-
-export async function enableFaceID() {
-  if (localMode || !loggedIn()) throw new Error('請先用密碼登入，再啟用 Face ID。');
-  if (enrollmentPassword === null) return false;
-  const result = await (hasPending() ? completeRegistration(enrollmentPassword) : enrollPasskey(enrollmentPassword));
-  if (result.ready) enrollmentPassword = null;
-  return result;
-}
-
-export async function loginWithFaceID() {
-  if (localMode) throw new Error('本機模式不需要 Face ID 登入。');
-  await login(await unlockPasskey());
-  enrollmentPassword = null;
-}
-
-export function disableFaceID() {
-  if (localMode || !loggedIn()) throw new Error('請先登入，再停用 Face ID。');
-  // 停用後仍只保留這次登入；下次開啟使用密碼。
-  try { localStorage.removeItem(STORE); } catch { /* 未保存明文 */ }
-  forgetPasskey();
-}
-
+// 只清記憶體；這台裝置記住的金鑰保留，下次開啟仍會自動解鎖。
 export function logout() {
   secrets = null;
-  enrollmentPassword = null;
-  try { localStorage.removeItem(STORE); } catch { /* 沒有儲存空間 */ }
+}
+
+// 移除這台裝置的登入：之後要重新用專屬連結開啟。
+export async function forgetDevice() {
+  secrets = null;
+  if (!await LinkKey.forget()) throw new Error('無法移除這台裝置的登入，請允許網站儲存資料後再試。');
 }
 
 /* ---------- 呼叫 Claude ---------- */
@@ -137,7 +108,7 @@ function apiFailure(e) {
   if (e instanceof Anthropic.APIUserAbortError) return Object.assign(new Error('cancelled'), { name: 'AbortError' });
   if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
     logout();
-    return fail(localMode ? '本機 API key 已失效，請重新設定 API key。' : 'API key 已經失效。請管理員重新執行 npm run setup 並發布，再輸入密碼。', 'login');
+    return fail(localMode ? '本機 API key 已失效，請重新設定 API key。' : 'API key 已經失效。請管理員更新金鑰並發布後，再重新開啟網站。', 'login');
   }
   if (e instanceof Anthropic.NotFoundError) return fail('這個 API key 不能使用所選的模型，請換一個模型。');
   if (e instanceof Anthropic.RateLimitError) return fail('Claude 的用量暫時滿了，請過一會兒再試。');
@@ -153,7 +124,7 @@ function apiFailure(e) {
 
 // 串流送出一次請求 → { text, model, stopReason }；onText 每次拿到目前為止的全文
 async function run(info, params, { signal, onText, refused }) {
-  if (!secrets?.apiKey) throw fail('請先輸入密碼。', 'login');
+  if (!secrets?.apiKey) throw fail('請用專屬連結開啟網站。', 'login');
   const client = new Anthropic({ apiKey: secrets.apiKey, dangerouslyAllowBrowser: true });
   const stream = info.fallback ? client.beta.messages.stream({ ...params, ...FALLBACK }, { signal }) : client.messages.stream(params, { signal });
   let text = '';

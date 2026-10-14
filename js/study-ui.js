@@ -11,8 +11,7 @@ const el = (tag, text) => { const n = document.createElement(tag); if (text !== 
 export function initStudyUI(bridge) {
   const host = document.createElement('div');
   host.innerHTML = `
-  <dialog class="study-dialog" id="study-library"><form method="dialog" class="study-heading"><h2>學習經歷</h2><button class="btn">關閉</button></form>
-    <p>回顧學過的文章、單字、題目與測驗結果，可重播、收藏或複習錯題。成功且完整的講解會自動保存在這個瀏覽器；清除網站資料會刪除這些紀錄。</p>
+  <dialog class="study-dialog" id="study-library"><form method="dialog" class="study-heading"><h2 title="回顧學過的文章、單字、題目與測驗結果，可重播、收藏或複習錯題。成功且完整的講解會自動保存在這個瀏覽器；清除網站資料會刪除這些紀錄。">學習經歷</h2><button class="btn">關閉</button></form>
     <div class="study-filters"><input id="library-search" type="search" placeholder="搜尋文章、單字、題目或科目" aria-label="搜尋學習經歷"><select id="library-filter" aria-label="學習經歷篩選"><option value="all">全部</option><option value="favorite">收藏</option><option value="review">待複習</option></select></div>
     <p id="library-status" role="status"></p><div id="library-list"></div></dialog>
   <dialog class="study-dialog" id="study-tools"><form method="dialog" class="study-heading"><h2>學習工具</h2><button class="btn">關閉</button></form>
@@ -84,7 +83,7 @@ export function initStudyUI(bridge) {
       if (version !== libraryVersion) return;
       const query = $('library-search').value.trim().toLowerCase(), filter = $('library-filter').value;
       const shown = records.filter(r => `${r.lesson.title} ${r.lesson.problem} ${r.lesson.subject}`.toLowerCase().includes(query) && (filter === 'all' || r[filter]));
-      $('library-status').textContent = `${shown.length} 份${records.length ? '' : '，拍照學習後會自動儲存。'}`;
+      $('library-status').textContent = `${shown.length} 份`;
       $('library-list').replaceChildren(...shown.map(r => {
         const card = el('article'); card.className = 'library-card';
         card.append(el('h3', r.lesson.title), el('p', `${r.lesson.subject || ''} · ${new Date(r.created).toLocaleString('zh-TW')}${r.favorite ? ' · 已收藏' : ''}${r.review ? ' · 待複習' : ''}`), el('p', r.lesson.problem));

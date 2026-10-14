@@ -1,6 +1,5 @@
 // 隨身小老師：拍照、選題，Claude 解完以後用黑板動畫一步一步講解，還可以追問。
-import { loggedIn, login, logout, enableFaceID, loginWithFaceID, disableFaceID, currentSecrets, listProblems, solve, followUp, MODELS, DEFAULT_MODEL, EFFORT, modelName, initializeLocalSession, isLocalSession, saveLocalKey } from './ai.js';
-import { hasPasskey, hasPending, supportsPasskey, passkeyError } from './passkey.js';
+import { loggedIn, unlockWithKey, forgetDevice, currentSecrets, listProblems, solve, followUp, MODELS, DEFAULT_MODEL, EFFORT, modelName, initializeLocalSession, isLocalSession } from './ai.js';
 import { logEvent, flushLogWrites, resumeLogEvents } from './logger.js';
 import { lessonFromText, normalizeFigure, normalizeHead, normalizeLesson, normalizeStep, scanPartial } from './lesson.js';
 import { Player } from './player.js';
@@ -21,16 +20,16 @@ import { initLoginScreen } from './login-screen.js';
 initSiteUpdate({ beforeRefresh: flushLogWrites });
 
 const $ = id => document.getElementById(id);
-const loginScreen = initLoginScreen($('login'));
+const loginScreen = initLoginScreen($('login'), { onKey: key => openWithKey(key, true) });
 const PREF_KEY = 'scan-solver.prefs';
 const prefs = (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; } catch { return {}; } })();
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch { /* 沒有儲存空間 */ } };
 
 const player = new Player({ svg: $('b-fig'), notes: $('b-notes'), caption: $('b-caption'), body: $('b-body') });
 
-// session：ok 已用密碼解開 API key；login 要輸入密碼
-let session = loggedIn() ? { ok: true, login: false } : { ok: false, login: true };
-let faceSupported = false, authBusy = false;
+// session：ok 已用專屬連結解開 API key；login 要用專屬連結開啟
+let session = { ok: false, login: true };
+let authBusy = false;
 let choice = currentSettings().model;
 addEventListener('scan-solver-settings', () => { choice = currentSettings().model; });
 const modelInfo = id => MODELS.find(m => m.id === id) || MODELS.find(m => m.id === DEFAULT_MODEL);
@@ -254,13 +253,11 @@ async function showLesson(lesson, { tag = '', autoplay = true } = {}) {
 
 const notReady = () => requireLogin();
 
-// 密碼過期或還沒登入：顯示密碼欄
+// API key 失效或還沒登入：顯示專屬連結登入卡
 function requireLogin(message = '') {
   session = { ok: false, login: true };
   renderSession();
-  $('login-error').hidden = !message;
-  $('login-error').textContent = message;
-  if (!$('password').disabled) $('password').focus({ preventScroll: true });
+  loginScreen.show(message);
 }
 
 // 模型與強度由管理員設定，解題頁不顯示；實際用量與備援模型寫入管理紀錄。
@@ -761,124 +758,59 @@ document.addEventListener('click', () => { if (player.voice && !document.querySe
 
 function renderSession() {
   $('app').hidden = session.login;
-  $('login').querySelector('label').textContent = isLocalSession() ? '本機 Claude API key（首次設定）' : '登入密碼';
-  $('password').autocomplete = isLocalSession() ? 'off' : 'current-password';
-  $('password').placeholder = isLocalSession() ? 'sk-ant-…' : '輸入原本的密碼';
-  $('login-title').textContent = isLocalSession() ? '開始你的學習' : '解鎖你的學習';
-  $('login-note').textContent = isLocalSession() ? '只需設定一次，之後本機啟動會自動載入。' : '使用時會記錄手機型號、學習內容和老師回覆，只有管理員看得到。不收集手機位置，也不要求定位授權。';
-  const faceEnabled = hasPasskey(), remote = !isLocalSession();
+  const local = isLocalSession();
+  $('login-title').textContent = local ? '本機尚未設定' : '用專屬連結開啟';
+  $('login-hint').hidden = !local;
+  $('login-paste').hidden = local;
   const admin = $('open-admin'), localTools = $('login-local-tools');
   if (admin) {
-    admin.hidden = remote;
-    localTools.hidden = remote || !session.login;
-    (isLocalSession() && session.login ? localTools : document.querySelector('.study-nav')).append(admin);
+    admin.hidden = !local;
+    localTools.hidden = !local || !session.login;
+    (local && session.login ? localTools : document.querySelector('.study-nav')).append(admin);
   }
-  loginScreen.render({ visible: session.login, hasCredential: remote && faceEnabled && faceSupported, busy: authBusy, passwordLabel: isLocalSession() ? '儲存並開始' : '解鎖學習內容' });
-  $('face-login-note').textContent = isLocalSession() ? '首次設定 API key 後即可開始學習；之後會自動載入。' : faceEnabled ? '每次開啟或回到網站會自動驗證；取消後可重試或使用密碼。' : '先用密碼登入，再到設定啟用 Face ID／通行金鑰。';
-  $('device-unlock').hidden = !remote || !session.ok || (!faceSupported && !faceEnabled);
-  $('open-face').hidden = $('device-unlock').hidden;
-  if ($('open-face').hidden) $('face-settings').close();
-  $('face-enable').hidden = !faceSupported;
-  $('face-enable').textContent = hasPending() ? '完成 Face ID 設定' : faceEnabled ? '重新設定 Face ID' : '啟用 Face ID';
-  $('face-lock').hidden = $('face-disable').hidden = !faceEnabled;
-  $('face-status').textContent = hasPending() ? '請再點「完成 Face ID 設定」，完成裝置驗證。' : faceEnabled ? '已啟用：每次開啟或回到網站會自動啟動裝置驗證。' : '下次開啟可用 Face ID、Touch ID 或裝置解鎖登入。';
-  document.documentElement.dataset.faceLocked = String(remote && faceEnabled && !session.ok);
+  $('forget-device').hidden = local || !session.ok;
+  loginScreen.render({ visible: session.login, busy: authBusy });
   for (const id of ['shoot', 'album', 'voice-entry']) $(id).disabled = !session.ok;
 }
 
 function setAuthBusy(busy) {
   authBusy = busy;
-  for (const id of ['face-enable', 'face-lock', 'face-disable']) $(id).disabled = busy;
-  loginScreen.render({ busy, passwordLabel: isLocalSession() ? '儲存並開始' : '解鎖學習內容' });
-  if (!busy) void autoFace.resume();
+  $('forget-device').disabled = busy;
+  loginScreen.render({ busy });
 }
 
-async function finishLogin() {
+// 只有新開專屬連結（這台裝置第一次登入）才記一筆登入紀錄。
+async function finishLogin(fresh) {
   await refreshSettings({ local: isLocalSession(), secrets: currentSecrets() });
-  $('password').value = '';
-  loginScreen.hidePassword();
   session = { ok: true, login: false };
   void resumeLogEvents();
-  logEvent(currentSecrets(), { kind: 'login' });
-  $('login-error').hidden = true;
+  if (fresh) logEvent(currentSecrets(), { kind: 'login' });
+  loginScreen.show('');
   renderSession();
   hideError();
 }
 
-$('open-face').addEventListener('click', () => {
-  closeAsk(); player.pause();
-  $('face-settings').showModal();
-});
-
-$('login').addEventListener('submit', async e => {
-  e.preventDefault();
+// 網址帶來或貼上的金鑰（fresh）解開後才記住；裝置記住的金鑰被撤銷時會清掉。
+async function openWithKey(key, fresh) {
   if (authBusy) return;
   setAuthBusy(true);
   try {
-    if (isLocalSession()) await saveLocalKey($('password').value.trim());
-    else await login($('password').value);
-    await finishLogin();
+    const { saved } = await unlockWithKey(key, { fresh });
+    await finishLogin(fresh);
+    if (!saved) studyUI.notice('這個瀏覽器無法記住登入，下次仍需用專屬連結開啟。');
   } catch (error) {
-    $('login-error').hidden = false;
-    $('login-error').textContent = error.message;
-  } finally { setAuthBusy(false); }
-});
-
-async function unlockWithFaceID() {
-  if (authBusy) return;
-  setAuthBusy(true);
-  try { await loginWithFaceID(); await finishLogin(); }
-  catch (error) {
-    $('login-error').hidden = false;
-    $('login-error').textContent = passkeyError(error);
+    requireLogin(error.message);
   } finally { setAuthBusy(false); }
 }
-$('face-login').addEventListener('click', unlockWithFaceID);
 
-const autoFace = FaceIDCore.autoLogin({
-  enabled: () => !isLocalSession() && hasPasskey() && faceSupported,
-  unlocked: () => session.ok, busy: () => authBusy,
-  suspend: () => {
-    closeAsk(); player.pause(); speech.cancel();
-    for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
-    logout(); session = { ok: false, login: true }; renderSession();
-  },
-  unlock: unlockWithFaceID,
-});
-
-$('face-enable').addEventListener('click', async () => {
-  if (authBusy) return;
+// 移除這台裝置的登入：紀錄送出後清掉金鑰，之後要重新用專屬連結開啟。
+$('forget-device').addEventListener('click', async () => {
+  if (authBusy || !confirm('移除後，這台裝置要重新用專屬連結開啟。確定移除？')) return;
   setAuthBusy(true);
-  try {
-    if (!await enableFaceID()) {
-      logout();
-      requireLogin('請先用密碼登入，再按「啟用 Face ID」或「重新設定 Face ID」。');
-      return;
-    }
-    renderSession();
-  } catch (error) { $('face-status').textContent = passkeyError(error); }
-  finally { setAuthBusy(false); }
-});
-
-$('face-disable').addEventListener('click', () => {
-  if (authBusy) return;
-  try {
-    disableFaceID(); renderSession();
-    $('face-status').textContent = '已停用 Face ID，下次開啟請使用密碼登入。';
-  } catch (error) { $('face-status').textContent = passkeyError(error); }
-});
-
-$('face-lock').addEventListener('click', async () => {
-  if (authBusy) return;
-  setAuthBusy(true);
-  try {
-    await flushLogWrites();
-    logout();
-    try { sessionStorage.setItem('scan-solver.skip-auto-face', '1'); } catch { /* lock in place if storage is unavailable */
-      session = { ok: false, login: true }; renderSession(); setAuthBusy(false); return;
-    }
-    location.reload();
-  } catch { $('face-status').textContent = '學習紀錄尚未保存，請稍後再鎖定。'; setAuthBusy(false); }
+  try { await flushLogWrites(); }
+  catch { studyUI.notice('學習紀錄尚未保存，請稍後再移除。'); setAuthBusy(false); return; }
+  try { await forgetDevice(); location.reload(); }
+  catch (error) { studyUI.notice(error.message); setAuthBusy(false); }
 });
 
 
@@ -928,18 +860,19 @@ for (const id of ['t-play', 't-prev', 't-next', 't-answer', 'b-again', 't-ask'])
 async function init() {
   $('shoot').disabled = $('album').disabled = $('voice-entry').disabled = true;
   await initializeLocalSession();
-  faceSupported = !isLocalSession() && await supportsPasskey();
   if ($('open-admin')) $('open-admin').hidden = !isLocalSession();
   await resumeLogEvents();
   await refreshSettings({ local: isLocalSession(), secrets: currentSecrets() });
-  session = loggedIn() ? { ok: true, login: false } : { ok: false, login: true };
+  // 本機未設定 API key 時仍可許願、開管理頁；要用 AI 時才顯示設定提示。
+  session = loggedIn() ? { ok: true, login: false } : { ok: false, login: !isLocalSession() };
   renderSession();
-  let skipAutomatic = false;
-  try {
-    skipAutomatic = sessionStorage.getItem('scan-solver.skip-auto-face') === '1';
-    sessionStorage.removeItem('scan-solver.skip-auto-face');
-  } catch { /* storage unavailable */ }
-  if (!session.ok && !skipAutomatic) void autoFace.start();
+  if (isLocalSession() && !loggedIn()) $('tip').textContent = '本機未設定，請執行 npm run setup。';
+  if (!isLocalSession()) {
+    let found = null;
+    try { found = await LinkKey.current(); }
+    catch (error) { requireLogin(error.message); }
+    if (found) await openWithKey(found.key, found.fresh);
+  }
   showHead({ title: '隨身小老師', problem: '拍照、相簿或語音開始學習；也可以說「考我國中常用單字」。' });
   // 字型和數學式好了再量一次字寬
   mathReady.then(() => player.refresh());
@@ -951,7 +884,7 @@ async function init() {
     else studyUI.notice('這個瀏覽器找不到該題，請從題庫選取。');
   }
   // 測試用入口只在登入狀態與初始畫面就緒後提供。
-  if (location.hash === '#test') window.__ss = { player, speech, showLesson, normalizeLesson,
+  if (/^#test(?:[=&]|$)/.test(location.hash)) window.__ss = { player, speech, showLesson, normalizeLesson,
     showTestPick: problems => { const id = 'test-pick'; photos.set(id, { listing: false, problems, thumb: '' }); showPick(id); } };
 }
 
